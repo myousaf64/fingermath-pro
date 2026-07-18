@@ -122,6 +122,18 @@
   }
   #countCaption.show { opacity: 1; }
 
+  #leaderBubble {
+    position: fixed; right: 28px; top: 34%;
+    max-width: 240px;
+    background: var(--charcoal); color: var(--cream);
+    font-size: 15px; font-weight: bold; letter-spacing: 0.5px;
+    padding: 12px 16px; border-radius: 14px 14px 2px 14px;
+    opacity: 0; transform: translateY(6px);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    pointer-events: none;
+  }
+  #leaderBubble.show { opacity: 1; transform: translateY(0); }
+
   #testBadge {
     position: fixed; top: 12px; right: 12px; font-size: 12px; font-family: monospace;
     background: var(--charcoal); color: var(--cream); padding: 6px 12px; border-radius: 8px; display: none;
@@ -131,7 +143,8 @@
 <body>
 <canvas id="scene"></canvas>
 
-<div id="countCaption">please count along. pen and paper recommended.</div>
+<div id="countCaption">press the glowing finger. count along. pen and paper recommended.</div>
+<div id="leaderBubble"></div>
 <div id="testBadge"></div>
 
 <!-- Splash -->
@@ -195,6 +208,13 @@ export function buildCountPlan(n) {
   return delays;
 }
 
+// 12 -> [5,5,2]; capped at 6 hands (30 fingers), rest reuses fingers
+export function handGroups(n) {
+  const groups = [];
+  for (let left = Math.min(Math.floor(Math.abs(n)), 30); left > 0; left -= 5) groups.push(Math.min(5, left));
+  return groups;
+}
+
 export function hashExpr(str) {
   let h = 0;
   for (let i = 0; i < str.length; i++) h = ((h << 5) - h + str.charCodeAt(i)) | 0;
@@ -228,6 +248,10 @@ if (location.search.includes('test')) {
   assert('plan slow start', buildCountPlan(15)[0] === 700);
   assert('plan ramps', buildCountPlan(35)[34] === 120);
   assert('plan floors decimals', buildCountPlan(3.33).length === 3);
+  assert('groups 12', JSON.stringify(handGroups(12)) === '[5,5,2]');
+  assert('groups 5', JSON.stringify(handGroups(5)) === '[5]');
+  assert('groups 0', handGroups(0).length === 0);
+  assert('groups cap', handGroups(56).length === 6);
   assert('ali deterministic', JSON.stringify(aliScript('3+4', 7)) === JSON.stringify(aliScript('3+4', 7)));
   assert('ali confidence bounded', (() => { const c = aliScript('7*8', 56).confidence; return c >= 51 && c <= 88; })());
 
@@ -308,14 +332,116 @@ tree(-6.5, -3.5, 1.3); tree(-5.4, -4.8, 0.9); tree(6.8, -3.2, 1.1); tree(5.6, -5
 rock(-7.2, 1.5, 1); rock(7.4, 0.8, 0.8); rock(6.6, 2.2, 0.5);
 
 /* ============================================================
-   BLOB CREATURES
+   HANDS — low-poly, articulated fingers
    ============================================================ */
-const MAX_CREATURES = 30;
-const creatures = [];
+const MAX_HANDS = 6;
+const MAX_FINGERS = MAX_HANDS * 5;
+const SKIN = 0xdbb48f;
+const hands = [];
 
-function makeCreature() {
+// Finger raise order within a hand: index, middle, ring, pinky, thumb
+function makeHand() {
   const g = new THREE.Group();
-  const bodyColor = [0x2e2b33, 0x39343f, 0x2a2f33][creatures.length % 3];
+
+  const palm = new THREE.Mesh(new THREE.BoxGeometry(1.15, 1.15, 0.34), flat(SKIN));
+  g.add(palm);
+  const wrist = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.5, 0.3), flat(0x8a7360));
+  wrist.position.y = -0.8;
+  g.add(wrist);
+
+  const fingers = [];
+  // four fingers along top edge
+  for (let f = 0; f < 4; f++) {
+    const mat = new THREE.MeshLambertMaterial({ color: SKIN, flatShading: true });
+    const pivot = new THREE.Group();
+    pivot.position.set(-0.42 + f * 0.28, 0.56, 0);
+    const len = [0.62, 0.72, 0.66, 0.5][f];
+    const seg1 = new THREE.Mesh(new THREE.BoxGeometry(0.2, len, 0.22), mat);
+    seg1.position.y = len / 2;
+    const seg2 = new THREE.Mesh(new THREE.BoxGeometry(0.18, len * 0.55, 0.2), mat);
+    seg2.position.set(0, len + len * 0.24, 0.03);
+    seg2.rotation.x = -0.15;
+    pivot.add(seg1, seg2);
+    pivot.rotation.x = 1.85; // folded down over the palm
+    g.add(pivot);
+    fingers.push({ pivot, mat, meshes: [seg1, seg2], axis: 'x', folded: 1.85, up: 0 });
+  }
+  // thumb on the side
+  {
+    const mat = new THREE.MeshLambertMaterial({ color: SKIN, flatShading: true });
+    const pivot = new THREE.Group();
+    pivot.position.set(0.6, -0.1, 0.05);
+    const seg1 = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.55, 0.24), mat);
+    seg1.position.y = 0.27;
+    const seg2 = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.3, 0.22), mat);
+    seg2.position.y = 0.68;
+    pivot.add(seg1, seg2);
+    pivot.rotation.z = -1.5; // folded across the palm
+    g.add(pivot);
+    fingers.push({ pivot, mat, meshes: [seg1, seg2], axis: 'z', folded: -1.5, up: -0.35 });
+  }
+
+  fingers.forEach((fg, i) => {
+    fg.target = fg.folded;
+    fg.highlight = false;
+    fg.raised = false;
+    fg.meshes.forEach(m => { m.userData.fingerRef = fg; });
+  });
+
+  g.userData = { fingers, wobblePhase: Math.random() * Math.PI * 2 };
+  return g;
+}
+
+for (let i = 0; i < MAX_HANDS; i++) {
+  const h = makeHand();
+  h.visible = false;
+  scene.add(h);
+  hands.push(h);
+}
+
+function layoutHands(n) { // n hands visible, arc facing camera
+  hands.forEach((h, i) => {
+    h.visible = i < n;
+    if (i < n) {
+      const x = (i - (n - 1) / 2) * 2.7;
+      h.position.set(x, 2.3, 0.6 - Math.abs(i - (n - 1) / 2) * 0.5);
+      h.rotation.y = -x * 0.05;
+    }
+  });
+}
+
+function fingerAt(i) { // global finger index -> finger object (wraps past 30)
+  const j = i % MAX_FINGERS;
+  return hands[Math.floor(j / 5)].userData.fingers[j % 5];
+}
+
+function setFinger(i, raised) {
+  const fg = fingerAt(i);
+  fg.raised = raised;
+  fg.highlight = false;
+  fg.target = raised ? fg.up : fg.folded;
+  fg.mat.emissive.setHex(0x000000);
+}
+
+function highlightFinger(i, on) {
+  const fg = fingerAt(i);
+  fg.highlight = on;
+  if (!on) fg.mat.emissive.setHex(0x000000);
+}
+
+function lowerAll() {
+  hands.forEach(h => h.userData.fingers.forEach(fg => {
+    fg.raised = false; fg.highlight = false; fg.target = fg.folded;
+    fg.mat.emissive.setHex(0x000000);
+  }));
+}
+
+/* ============================================================
+   VIKING SOLDIER + ARMY LEADER (Bad North blob style)
+   ============================================================ */
+function makeViking(scale, isLeader) {
+  const g = new THREE.Group();
+  const bodyColor = isLeader ? 0x4a3540 : 0x2e2b33;
 
   const body = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.52, 1.15, 8), flat(bodyColor));
   body.position.y = 0.58;
@@ -333,49 +459,56 @@ function makeCreature() {
     g.add(eye);
   }
 
-  // Arm pivot at shoulder; raising = pivot rotates back
-  const armPivot = new THREE.Group();
-  armPivot.position.set(0.42, 0.85, 0);
-  const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 0.55, 6), flat(bodyColor));
-  arm.position.y = -0.24;
-  const hand = new THREE.Mesh(new THREE.SphereGeometry(0.11, 6, 5), flat(0xf2ede4));
-  hand.position.y = -0.52;
-  armPivot.add(arm, hand);
-  armPivot.rotation.z = -0.5; // resting, slightly out
-  g.add(armPivot);
+  // helmet
+  const helmet = new THREE.Mesh(new THREE.ConeGeometry(0.3, 0.42, 7), flat(0x9aa0a8));
+  helmet.position.y = 1.32;
+  g.add(helmet);
+  if (isLeader) { // horns + banner
+    for (const s of [-1, 1]) {
+      const horn = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.35, 5), flat(0xf2ede4));
+      horn.position.set(s * 0.3, 1.35, 0);
+      horn.rotation.z = -s * 1.0;
+      g.add(horn);
+    }
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 2.6, 5), flat(0x8a7360));
+    pole.position.set(0.55, 1.3, -0.1);
+    g.add(pole);
+    const banner = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.9), new THREE.MeshLambertMaterial({ color: 0x8c3b3b, side: THREE.DoubleSide, flatShading: true }));
+    banner.position.set(0.92, 2.1, -0.1);
+    g.add(banner);
+  } else { // shield
+    const shield = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.08, 9), flat(0xc9a44a));
+    shield.rotation.x = Math.PI / 2;
+    shield.position.set(-0.45, 0.6, 0.1);
+    g.add(shield);
+  }
 
-  g.userData = { armPivot, raised: false, armTarget: -0.5, hop: 0, wobblePhase: Math.random() * Math.PI * 2 };
+  g.scale.setScalar(scale);
+  g.userData = { bob: 0, walking: false };
   return g;
 }
 
-// Grid positions: rows of 6 facing camera
-function gridPosition(i) {
-  const row = Math.floor(i / 6), col = i % 6;
-  return new THREE.Vector3((col - 2.5) * 1.7 + (row % 2) * 0.4, 0.5, 1.5 - row * 1.6);
-}
+const soldier = makeViking(1, false);
+soldier.position.set(-8, 0.5, 4);
+scene.add(soldier);
 
-for (let i = 0; i < MAX_CREATURES; i++) {
-  const c = makeCreature();
-  c.position.copy(gridPosition(i));
-  c.rotation.y = (Math.random() - 0.5) * 0.3;
-  c.visible = false;
-  scene.add(c);
-  creatures.push(c);
-}
+const leader = makeViking(1.4, true);
+leader.position.set(7.2, 0.9, 3.4);
+leader.rotation.y = -0.6;
+scene.add(leader);
+let leaderShoutAnim = 0; // >0 while shouting: leader hops angrily
 
-function setRaised(i, raised, hop = true) {
-  const c = creatures[i % MAX_CREATURES];
-  c.userData.raised = raised;
-  c.userData.armTarget = raised ? Math.PI + 0.35 : -0.5; // over the head vs resting
-  if (hop) c.userData.hop = 1;
-}
+const nextFrame = () => new Promise(requestAnimationFrame);
 
-function showCreatures(n) {
-  creatures.forEach((c, i) => { c.visible = i < n; });
-}
-
-function lowerAll() {
-  creatures.forEach((_, i) => setRaised(i, false, false));
+async function soldierWalkTo(x, z) {
+  soldier.userData.walking = true;
+  const target = new THREE.Vector3(x, 0.5, z);
+  soldier.lookAt(target.x, 0.5, target.z);
+  while (soldier.position.distanceTo(target) > 0.15) {
+    soldier.position.lerp(target, 0.045);
+    await nextFrame();
+  }
+  soldier.userData.walking = false;
 }
 
 let celebrate = false;
@@ -400,21 +533,29 @@ function animate() {
   // gentle camera drift
   camera.position.x = Math.sin(t * 0.12) * 1.6;
   camera.position.y = 9 + Math.sin(t * 0.2) * 0.3;
-  camera.lookAt(0, 1, 0);
+  camera.lookAt(0, 1.4, 0);
 
-  for (const c of creatures) {
-    if (!c.visible) continue;
-    const u = c.userData;
-    u.armPivot.rotation.z += (u.armTarget - u.armPivot.rotation.z) * 0.14;
-    if (u.hop > 0.01) {
-      u.hop *= 0.88;
-      c.position.y = 0.5 + Math.sin(u.hop * Math.PI) * 0.35;
-    } else {
-      c.position.y = 0.5;
+  for (const h of hands) {
+    if (!h.visible) continue;
+    for (const fg of h.userData.fingers) {
+      fg.pivot.rotation[fg.axis] += (fg.target - fg.pivot.rotation[fg.axis]) * 0.14;
+      if (fg.highlight) fg.mat.emissive.setHex(0x000000).offsetHSL(0.3, 0.6, 0.22 + 0.14 * Math.sin(t * 6));
     }
-    if (celebrate) c.rotation.z = Math.sin(t * 6 + u.wobblePhase) * 0.12;
-    else c.rotation.z *= 0.9;
+    if (celebrate) h.rotation.z = Math.sin(t * 6 + h.userData.wobblePhase) * 0.1;
+    else h.rotation.z *= 0.9;
   }
+
+  // soldier bob while walking, leader angry hop while shouting
+  soldier.position.y = 0.5 + (soldier.userData.walking ? Math.abs(Math.sin(t * 10)) * 0.18 : 0);
+  if (leaderShoutAnim > 0.01) {
+    leaderShoutAnim *= 0.92;
+    leader.position.y = 0.9 + Math.abs(Math.sin(t * 14)) * 0.25 * leaderShoutAnim;
+    leader.rotation.z = Math.sin(t * 14) * 0.06 * leaderShoutAnim;
+  } else {
+    leader.position.y = 0.9;
+  }
+  if (celebrate) soldier.rotation.z = Math.sin(t * 6) * 0.12;
+
   renderer.render(scene, camera);
 }
 animate();
@@ -535,9 +676,9 @@ async function compute(a, op, b) {
     return;
   }
   if (result === 0) {
-    await aliSay("The answer involves zero fingers. Observe the stillness.", 2200);
+    await aliSay("The answer involves zero fingers. Observe the closed fist. Observe the stillness.", 2200);
     lowerAll();
-    showCreatures(6);
+    layoutHands(1);
     await sleep(1800);
     promptAnswer();
     return;
@@ -547,38 +688,98 @@ async function compute(a, op, b) {
   promptAnswer();
 }
 
+/* ---------- Leader shouts (text bubble; voice layered in leaderShout audio) ---------- */
+const SHOUTS = [
+  "RAISE IT! SLOWLY! WITH DIGNITY!",
+  "THAT IS A FINGER, OLAF! TREAT IT WITH RESPECT!",
+  "ONE! FINGER! AT! A! TIME!",
+  "MY GRANDMOTHER RAISES FINGERS FASTER!",
+  "STRAIGHTEN IT! IT'S DROOPING!",
+  "DO NOT LOOK AT ME! LOOK AT THE FINGER!",
+  "THIS IS WHY WE LOST THE FJORD, OLAF!",
+  "MAGNIFICENT! NO WAIT! IT'S CROOKED! ACCEPTABLE!",
+  "THE CUSTOMER IS COUNTING ON YOU! LITERALLY!",
+  "YOU CALL THAT KNUCKLE FORM?!",
+  "FASTER LEGS! SLOWER FINGERS!",
+  "I HAVE SEEN GLACIERS WITH MORE URGENCY!"
+];
+const IMPATIENCE = "ENOUGH POKING! OLAF! RAISE THE REST YOURSELF! HURRY!";
+let bubbleTimer = null;
+
+function leaderShout(i) {
+  const line = i < 0 ? IMPATIENCE : SHOUTS[(hashExpr(state.exprStr) + i) % SHOUTS.length];
+  leaderShoutAnim = 1;
+  const bubble = $('leaderBubble');
+  bubble.textContent = line;
+  bubble.classList.add('show');
+  clearTimeout(bubbleTimer);
+  bubbleTimer = setTimeout(() => bubble.classList.remove('show'), 2200);
+  playShoutAudio(line);
+}
+
+function playShoutAudio(_line) { /* voice hook: filled in by TTS layer */ }
+
+/* ---------- Finger press detection ---------- */
+const raycaster = new THREE.Raycaster();
+let pendingPress = null;
+const waitForPress = i => new Promise(res => { pendingPress = { i, res }; });
+
+renderer.domElement.addEventListener('pointerdown', e => {
+  if (!pendingPress) return;
+  const mouse = new THREE.Vector2((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  raycaster.setFromCamera(mouse, camera);
+  if (raycaster.intersectObjects(fingerAt(pendingPress.i).meshes).length) {
+    const p = pendingPress;
+    pendingPress = null;
+    p.res();
+  }
+});
+
 async function runCountSequence(result) {
   const whole = Math.floor(result);
-  const plan = buildCountPlan(result);
-  const visible = Math.min(Math.max(whole, 1), MAX_CREATURES);
-
   lowerAll();
-  showCreatures(visible);
+  layoutHands(handGroups(whole).length || 1);
   celebrate = false;
 
   await aliSay("I have computed the answer internally. I will now withhold it, for your growth.", 2300);
-  if (whole > 30) {
-    await aliSay(`This requires ${whole} finger events. I did not sign up for this, and neither did they. We proceed.`, 2600);
+  if (whole > MAX_FINGERS) {
+    await aliSay(`This requires ${whole} finger events and we own ${MAX_FINGERS} fingers. We will be reusing fingers. Nobody is happy about this.`, 3000);
   }
+  await aliSay("Press the glowing finger. The soldier will raise it. He has to. It is his job.", 2600);
   $('aliPanel').classList.add('hidden');
   $('countCaption').classList.add('show');
 
-  for (let i = 0; i < plan.length; i++) {
-    if (i >= MAX_CREATURES) {
-      // wrap around: pulse an already-raised creature
-      setRaised(i % MAX_CREATURES, false, false);
-      await sleep(60);
-      setRaised(i % MAX_CREATURES, true);
-    } else {
-      setRaised(i, true);
+  const plan = buildCountPlan(result);
+  const interactive = Math.min(10, whole);
+
+  for (let i = 0; i < whole; i++) {
+    if (i === interactive && whole > interactive) {
+      leaderShout(-1);
+      soldierWalkTo(0, 3.2); // not awaited: he hustles to center while fingers fly
+      await sleep(1200);
     }
-    await sleep(plan[i]);
+    if (i >= MAX_FINGERS) { setFinger(i, false); await sleep(80); } // reuse a finger
+
+    if (i < interactive) {
+      highlightFinger(i, true);
+      await waitForPress(i);
+      highlightFinger(i, false);
+      const h = hands[Math.floor((i % MAX_FINGERS) / 5)];
+      await soldierWalkTo(h.position.x, h.position.z + 2.4);
+      setFinger(i, true);
+      leaderShout(i);
+      await sleep(650);
+    } else {
+      setFinger(i, true);
+      if (i % 7 === 0) leaderShout(i);
+      await sleep(Math.min(plan[i], 260));
+    }
   }
 
   $('countCaption').classList.remove('show');
 
   if (!Number.isInteger(result)) {
-    await aliSay(`...and then a little bit extra. Point-something. I cannot finger a decimal. I am sorry. Include it anyway.`, 3000);
+    await aliSay(`...and then a little bit extra. Point-something. The soldier cannot raise a decimal. Include it anyway.`, 3000);
   }
 }
 
@@ -638,12 +839,13 @@ async function verify(guess) {
 
 async function partialRecount() {
   $('aliPanel').classList.add('hidden');
-  const whole = Math.min(Math.floor(state.result), MAX_CREATURES);
+  const whole = Math.min(Math.floor(state.result), MAX_FINGERS);
   const k = Math.min(3, whole);
-  for (let i = whole - k; i < whole; i++) setRaised(i, false, false);
+  for (let i = whole - k; i < whole; i++) setFinger(i, false);
   await sleep(500);
   for (let i = whole - k; i < whole; i++) {
-    setRaised(i, true);
+    setFinger(i, true);
+    leaderShout(i);
     await sleep(750);
   }
   await sleep(400);
