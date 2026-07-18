@@ -61,7 +61,7 @@
   button.ghost { background: transparent; color: var(--charcoal); }
 
   #padDisplay {
-    font-size: 30px;
+    font-size: 24px;
     letter-spacing: 2px;
     background: #fbf9f5;
     border: 1.5px solid #b9b2a6;
@@ -76,14 +76,14 @@
   }
   #padKeys {
     display: grid;
-    grid-template-columns: repeat(4, 64px);
-    gap: 8px;
+    grid-template-columns: repeat(4, 52px);
+    gap: 7px;
     justify-content: center;
   }
   #padKeys button {
     margin: 0;
-    padding: 12px 0;
-    font-size: 20px;
+    padding: 9px 0;
+    font-size: 18px;
     border-radius: 12px;
     background: #fbf9f5;
     color: var(--ink);
@@ -134,6 +134,25 @@
   }
   #leaderBubble.show { opacity: 1; transform: translateY(0); }
 
+  .chooserRow { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 14px; }
+  .chooserRow button {
+    margin: 0; padding: 8px 18px; font-size: 14px;
+    background: #fbf9f5; color: var(--ink); border: 1.5px solid #b9b2a6;
+  }
+  .chooserRow button.active { background: var(--charcoal); color: var(--cream); border-color: var(--charcoal); }
+  .swatch {
+    width: 34px; height: 34px; border-radius: 50%; padding: 0 !important;
+    border: 2.5px solid transparent !important;
+  }
+  .swatch.active { border-color: var(--charcoal) !important; }
+
+  #gearBtn {
+    position: fixed; top: 14px; left: 14px; z-index: 5;
+    margin: 0; padding: 8px 12px; font-size: 17px; border-radius: 12px;
+    background: rgba(242, 237, 228, 0.9); color: var(--ink); border: 1.5px solid #b9b2a6;
+    display: none;
+  }
+
   #testBadge {
     position: fixed; top: 12px; right: 12px; font-size: 12px; font-family: monospace;
     background: var(--charcoal); color: var(--cream); padding: 6px 12px; border-radius: 8px; display: none;
@@ -155,6 +174,18 @@
   <div class="tagline">Someone might ask, why a finger counting based calculator in big 2026? And we thought why not?</div>
   <button id="beginBtn">Begin computing</button>
   <div class="small">With FingTech Labs we are dedicated to make the world... ummm... the same place probably?</div>
+</div>
+
+<button id="gearBtn" title="Change hands">&#9881; hands</button>
+
+<!-- Hand chooser -->
+<div class="panel center hidden" id="handsPanel">
+  <div class="kicker">Customize</div>
+  <h1 style="font-size: 26px">Choose your hands</h1>
+  <div class="tagline">These are the fingers you will be pressing. Choose wisely. It changes nothing.</div>
+  <div class="chooserRow" id="themeRow"></div>
+  <div class="chooserRow" id="tintRow"></div>
+  <button id="handsDoneBtn">These are my hands</button>
 </div>
 
 <!-- Keypad: expression entry AND answer entry -->
@@ -344,46 +375,84 @@ rock(-7.2, 1.5, 1); rock(7.4, 0.8, 0.8); rock(6.6, 2.2, 0.5);
    ============================================================ */
 const MAX_HANDS = 6;
 const MAX_FINGERS = MAX_HANDS * 5;
-const SKIN = 0xdbb48f;
 const hands = [];
+
+// Cosmetic themes; tint = main surface color. Same articulation everywhere.
+const HAND_THEMES = {
+  human:    { label: 'Human',    tints: [0xdbb48f, 0xb98a62, 0x8a5f42, 0xf0cdb0], width: 1,    wrist: 0x8a7360 },
+  gauntlet: { label: 'Gauntlet', tints: [0x9aa0a8, 0x6f7680, 0xb08d57, 0x4a4f57], width: 1.15, wrist: 0x5c4a38 },
+  skeleton: { label: 'Skeleton', tints: [0xf2ede4, 0xd9cfc0, 0xbfb8a8, 0xe8e2d0], width: 0.55, wrist: 0xbfb8a8 },
+  robot:    { label: 'Robot',    tints: [0x8fa3b8, 0x7f8fa6, 0xa8b5a0, 0x5c6670], width: 0.9,  wrist: 0x2e2b33 }
+};
+let handChoice = { theme: 'human', tint: 0 };
+try { handChoice = { ...handChoice, ...JSON.parse(localStorage.fingermathHands || '{}') } } catch {}
+if (!HAND_THEMES[handChoice.theme]) handChoice.theme = 'human';
 
 // Finger raise order within a hand: index, middle, ring, pinky, thumb
 function makeHand() {
+  const theme = HAND_THEMES[handChoice.theme];
+  const tint = theme.tints[handChoice.tint % theme.tints.length];
+  const w = theme.width;
   const g = new THREE.Group();
 
-  const palm = new THREE.Mesh(new THREE.BoxGeometry(1.15, 1.15, 0.34), flat(SKIN));
+  const palm = new THREE.Mesh(new THREE.BoxGeometry(1.15, 1.15, 0.34 * w), flat(tint));
   g.add(palm);
-  const wrist = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.5, 0.3), flat(0x8a7360));
+  const wrist = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.5, 0.3), flat(theme.wrist));
   wrist.position.y = -0.8;
   g.add(wrist);
 
+  if (handChoice.theme === 'gauntlet') { // knuckle studs
+    for (let s = 0; s < 4; s++) {
+      const stud = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 0.14), flat(0xd9cfc0));
+      stud.position.set(-0.42 + s * 0.28, 0.45, 0.2);
+      g.add(stud);
+    }
+  }
+  if (handChoice.theme === 'robot') { // chest panel line + bolt
+    const seam = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.05, 0.36 * w), flat(0x2e2b33));
+    seam.position.y = 0.1;
+    g.add(seam);
+    const bolt = new THREE.Mesh(new THREE.SphereGeometry(0.09, 6, 5),
+      new THREE.MeshLambertMaterial({ color: 0x2e2b33, emissive: 0x44ccaa, emissiveIntensity: 0.7, flatShading: true }));
+    bolt.position.set(0, -0.25, 0.2);
+    g.add(bolt);
+  }
+
   const fingers = [];
+  const jointDot = pivot => { // robot: glowing knuckle
+    const dot = new THREE.Mesh(new THREE.SphereGeometry(0.07, 6, 5),
+      new THREE.MeshLambertMaterial({ color: 0x2e2b33, emissive: 0x44ccaa, emissiveIntensity: 0.7, flatShading: true }));
+    pivot.add(dot);
+  };
   // four fingers along top edge
   for (let f = 0; f < 4; f++) {
-    const mat = new THREE.MeshLambertMaterial({ color: SKIN, flatShading: true });
+    const mat = new THREE.MeshLambertMaterial({ color: tint, flatShading: true });
     const pivot = new THREE.Group();
     pivot.position.set(-0.42 + f * 0.28, 0.56, 0);
     const len = [0.62, 0.72, 0.66, 0.5][f];
-    const seg1 = new THREE.Mesh(new THREE.BoxGeometry(0.2, len, 0.22), mat);
+    const gap = handChoice.theme === 'skeleton' ? 0.08 : 0;
+    const seg1 = new THREE.Mesh(new THREE.BoxGeometry(0.2 * w, len, 0.22 * w), mat);
     seg1.position.y = len / 2;
-    const seg2 = new THREE.Mesh(new THREE.BoxGeometry(0.18, len * 0.55, 0.2), mat);
-    seg2.position.set(0, len + len * 0.24, 0.03);
+    const seg2 = new THREE.Mesh(new THREE.BoxGeometry(0.18 * w, len * 0.55, 0.2 * w), mat);
+    seg2.position.set(0, len + len * 0.24 + gap, 0.03);
     seg2.rotation.x = -0.15;
     pivot.add(seg1, seg2);
+    if (handChoice.theme === 'robot') jointDot(pivot);
     pivot.rotation.x = 1.85; // folded down over the palm
     g.add(pivot);
     fingers.push({ pivot, mat, meshes: [seg1, seg2], axis: 'x', folded: 1.85, up: 0 });
   }
   // thumb on the side
   {
-    const mat = new THREE.MeshLambertMaterial({ color: SKIN, flatShading: true });
+    const mat = new THREE.MeshLambertMaterial({ color: tint, flatShading: true });
     const pivot = new THREE.Group();
     pivot.position.set(0.6, -0.1, 0.05);
-    const seg1 = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.55, 0.24), mat);
+    const seg1 = new THREE.Mesh(new THREE.BoxGeometry(0.22 * w, 0.55, 0.24 * w), mat);
     seg1.position.y = 0.27;
-    const seg2 = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.3, 0.22), mat);
+    const seg2 = new THREE.Mesh(new THREE.BoxGeometry(0.2 * w, 0.3, 0.22 * w), mat);
     seg2.position.y = 0.68;
     pivot.add(seg1, seg2);
+    if (handChoice.theme === 'robot') jointDot(pivot);
     pivot.rotation.z = -1.5; // folded across the palm
     g.add(pivot);
     fingers.push({ pivot, mat, meshes: [seg1, seg2], axis: 'z', folded: -1.5, up: -0.35 });
@@ -400,12 +469,19 @@ function makeHand() {
   return g;
 }
 
-for (let i = 0; i < MAX_HANDS; i++) {
-  const h = makeHand();
-  h.visible = false;
-  scene.add(h);
-  hands.push(h);
+function rebuildHands() {
+  const visible = hands.filter(h => h.visible).length;
+  for (const h of hands) scene.remove(h);
+  hands.length = 0;
+  for (let i = 0; i < MAX_HANDS; i++) {
+    const h = makeHand();
+    h.visible = false;
+    scene.add(h);
+    hands.push(h);
+  }
+  if (visible) layoutHands(visible);
 }
+rebuildHands();
 
 function layoutHands(n) { // n hands visible, arc facing camera
   hands.forEach((h, i) => {
@@ -577,7 +653,7 @@ animate();
    UI / FLOW STATE MACHINE
    ============================================================ */
 const $ = id => document.getElementById(id);
-const panels = ['splashPanel', 'padPanel', 'aliPanel'];
+const panels = ['splashPanel', 'handsPanel', 'padPanel', 'aliPanel'];
 function showPanel(id) {
   panels.forEach(p => $(p).classList.toggle('hidden', p !== id));
 }
@@ -663,9 +739,66 @@ addEventListener('keydown', e => {
   else if (e.key === 'Backspace' || e.key === 'Escape') padPress('C');
 });
 
+/* ---------- Hand chooser ---------- */
+function previewHands() {
+  lowerAll();
+  layoutHands(1);
+  hands[0].userData.fingers.forEach(fg => { fg.raised = true; fg.target = fg.up; });
+}
+
+function buildChooser() {
+  const tr = $('themeRow');
+  tr.innerHTML = '';
+  for (const [key, th] of Object.entries(HAND_THEMES)) {
+    const b = document.createElement('button');
+    b.textContent = th.label;
+    b.classList.toggle('active', key === handChoice.theme);
+    b.onclick = () => { handChoice.theme = key; handChoice.tint = 0; applyChoice(); };
+    tr.appendChild(b);
+  }
+  const w = $('tintRow');
+  w.innerHTML = '';
+  HAND_THEMES[handChoice.theme].tints.forEach((c, i) => {
+    const b = document.createElement('button');
+    b.className = 'swatch' + (i === handChoice.tint ? ' active' : '');
+    b.style.background = '#' + c.toString(16).padStart(6, '0');
+    b.title = 'skin ' + (i + 1);
+    b.onclick = () => { handChoice.tint = i; applyChoice(); };
+    w.appendChild(b);
+  });
+}
+
+function applyChoice() {
+  localStorage.fingermathHands = JSON.stringify(handChoice);
+  rebuildHands();
+  buildChooser();
+  previewHands();
+}
+
+function openChooser() {
+  buildChooser();
+  previewHands();
+  showPanel('handsPanel');
+}
+
+const toKeypad = () => showPad('expr', 'Present your expression. I will handle the... facilitation.');
+
 $('beginBtn').onclick = () => {
   unlockAudio();
-  showPad('expr', 'Present your expression. I will handle the... facilitation.');
+  $('gearBtn').style.display = 'block';
+  openChooser();
+};
+
+$('handsDoneBtn').onclick = () => {
+  lowerAll();
+  layoutHands(0);
+  toKeypad();
+};
+
+$('gearBtn').onclick = () => {
+  // only from idle states, never mid-count
+  if ($('padPanel').classList.contains('hidden') && $('handsPanel').classList.contains('hidden')) return;
+  openChooser();
 };
 
 async function compute(a, op, b) {
@@ -683,12 +816,12 @@ async function compute(a, op, b) {
 
   if (result === null) {
     await aliSay("Division by zero. Even I have limits, and they are numerous.", 2400);
-    $('beginBtn').onclick();
+    toKeypad();
     return;
   }
   if (result < 0) {
     await aliSay("A negative result. Unfortunately I only have upward fingers. Please try a friendlier expression.", 2800);
-    $('beginBtn').onclick();
+    toKeypad();
     return;
   }
   if (result === 0) {
@@ -727,6 +860,11 @@ function leaderShout(i) {
   const line = i < 0 ? IMPATIENCE : SHOUTS[lineIdx];
   leaderShoutAnim = 1;
   const bubble = $('leaderBubble');
+  // anchor bubble beside the leader on screen
+  worldTmp.copy(leader.position).add(new THREE.Vector3(0, 3.2, 0)).project(camera);
+  bubble.style.left = Math.min((worldTmp.x + 1) / 2 * innerWidth - 120, innerWidth - 260) + 'px';
+  bubble.style.top = Math.max((1 - worldTmp.y) / 2 * innerHeight - 40, 12) + 'px';
+  bubble.style.right = 'auto';
   bubble.textContent = line;
   bubble.classList.add('show');
   clearTimeout(bubbleTimer);
