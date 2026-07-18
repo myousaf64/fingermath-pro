@@ -707,17 +707,43 @@ const IMPATIENCE = "ENOUGH POKING! OLAF! RAISE THE REST YOURSELF! HURRY!";
 let bubbleTimer = null;
 
 function leaderShout(i) {
-  const line = i < 0 ? IMPATIENCE : SHOUTS[(hashExpr(state.exprStr) + i) % SHOUTS.length];
+  const lineIdx = i < 0 ? -1 : (hashExpr(state.exprStr) + i) % SHOUTS.length;
+  const line = i < 0 ? IMPATIENCE : SHOUTS[lineIdx];
   leaderShoutAnim = 1;
   const bubble = $('leaderBubble');
   bubble.textContent = line;
   bubble.classList.add('show');
   clearTimeout(bubbleTimer);
   bubbleTimer = setTimeout(() => bubble.classList.remove('show'), 2200);
-  playShoutAudio(line);
+  playShoutAudio(line, lineIdx);
 }
 
-function playShoutAudio(_line) { /* voice hook: filled in by TTS layer */ }
+// Voice layering: runtime TTS via /tts proxy -> pregenerated mp3 -> silent.
+// Blob URLs cached per line so repeat shouts are instant.
+const shoutCache = new Map();
+let ttsAvailable = true;
+let currentShout = null;
+
+async function playShoutAudio(line, lineIdx) {
+  let url = shoutCache.get(line);
+  if (!url && ttsAvailable) {
+    try {
+      const r = await fetch('/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: line })
+      });
+      if (r.ok) {
+        url = URL.createObjectURL(await r.blob());
+        shoutCache.set(line, url);
+      } else ttsAvailable = false;
+    } catch { ttsAvailable = false; }
+  }
+  if (!url) url = lineIdx < 0 ? 'assets/audio/impatience.mp3' : `assets/audio/shout-${lineIdx}.mp3`;
+  if (currentShout) currentShout.pause();
+  currentShout = new Audio(url);
+  currentShout.play().catch(() => {}); // silent fallback (autoplay policy / missing file)
+}
 
 /* ---------- Finger press detection ---------- */
 const raycaster = new THREE.Raycaster();
