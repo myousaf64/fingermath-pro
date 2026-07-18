@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FingerMath Pro — by FingTech Labs</title>
+<style>
+  :root {
+    --sage: #a8b5a0;
+    --sand: #d9cfc0;
+    --dusk: #7f8fa6;
+    --charcoal: #2e2b33;
+    --cream: #f2ede4;
+    --ink: #35323a;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    font-family: Georgia, 'Times New Roman', serif;
+    color: var(--ink);
+    background: var(--sage);
+  }
+  #scene { position: fixed; inset: 0; display: block; }
+
+  .panel {
+    position: fixed;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(242, 237, 228, 0.94);
+    border-radius: 14px;
+    box-shadow: 0 10px 40px rgba(46, 43, 51, 0.18);
+    padding: 26px 34px;
+    text-align: center;
+    max-width: 560px;
+    width: calc(100% - 40px);
+    transition: opacity 0.5s ease, transform 0.5s ease;
+  }
+  .panel.hidden { opacity: 0; pointer-events: none; transform: translateX(-50%) translateY(12px); }
+  .panel.bottom { bottom: 36px; }
+  .panel.center { top: 50%; transform: translate(-50%, -50%); }
+  .panel.center.hidden { transform: translate(-50%, -46%); }
+
+  h1 { font-size: 34px; font-weight: normal; letter-spacing: 0.5px; margin-bottom: 6px; }
+  .kicker { font-size: 13px; letter-spacing: 3px; text-transform: uppercase; color: var(--dusk); margin-bottom: 14px; }
+  .tagline { font-size: 15px; font-style: italic; color: #6b6572; line-height: 1.55; margin-bottom: 8px; }
+  .small { font-size: 12px; color: #8a8492; line-height: 1.5; margin-top: 14px; }
+
+  button {
+    font-family: inherit;
+    font-size: 16px;
+    padding: 10px 28px;
+    margin-top: 16px;
+    border: 1.5px solid var(--charcoal);
+    border-radius: 999px;
+    background: var(--charcoal);
+    color: var(--cream);
+    cursor: pointer;
+    transition: transform 0.15s ease, background 0.2s ease;
+  }
+  button:hover { transform: translateY(-1px); background: #443f4d; }
+  button.ghost { background: transparent; color: var(--charcoal); }
+
+  input, select {
+    font-family: inherit;
+    font-size: 22px;
+    width: 90px;
+    padding: 8px 10px;
+    text-align: center;
+    border: 1.5px solid #b9b2a6;
+    border-radius: 10px;
+    background: #fbf9f5;
+    color: var(--ink);
+    outline: none;
+  }
+  input:focus, select:focus { border-color: var(--dusk); }
+  select { width: 70px; cursor: pointer; }
+  .exprRow { display: flex; gap: 12px; justify-content: center; align-items: center; margin: 14px 0 4px; }
+
+  #aliLine {
+    min-height: 48px;
+    font-size: 17px;
+    font-style: italic;
+    line-height: 1.5;
+    color: #514c59;
+  }
+  .aliName { font-style: normal; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: var(--dusk); margin-bottom: 8px; }
+
+  #confidenceWrap { margin-top: 14px; display: none; }
+  #confidenceBar {
+    height: 6px; border-radius: 999px; background: #ddd6ca; overflow: hidden;
+  }
+  #confidenceFill {
+    height: 100%; width: 0%; background: var(--dusk); border-radius: 999px;
+    transition: width 0.6s ease;
+  }
+  #confidenceLabel { font-size: 11px; letter-spacing: 1px; color: #8a8492; margin-top: 6px; text-transform: uppercase; }
+
+  #countCaption {
+    position: fixed; top: 30px; left: 50%; transform: translateX(-50%);
+    text-align: center; opacity: 0; transition: opacity 0.6s ease; pointer-events: none;
+    background: rgba(242, 237, 228, 0.85); padding: 12px 26px; border-radius: 999px;
+    font-style: italic; font-size: 15px; color: #514c59;
+    box-shadow: 0 6px 24px rgba(46,43,51,0.12);
+  }
+  #countCaption.show { opacity: 1; }
+
+  #testBadge {
+    position: fixed; top: 12px; right: 12px; font-size: 12px; font-family: monospace;
+    background: var(--charcoal); color: var(--cream); padding: 6px 12px; border-radius: 8px; display: none;
+  }
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+
+<div id="countCaption">please count along. pen and paper recommended.</div>
+<div id="testBadge"></div>
+
+<!-- Splash -->
+<div class="panel center" id="splashPanel">
+  <div class="kicker">FingTech Labs presents...</div>
+  <h1>FingerMath Pro</h1>
+  <div class="tagline">powered by ALI — Artificial Lack of Intelligence</div>
+  <div class="tagline">Someone might ask, why a finger counting based calculator in big 2026? And we thought why not?</div>
+  <button id="beginBtn">Begin computing</button>
+  <div class="small">With FingTech Labs we are dedicated to make the world... ummm... the same place probably?</div>
+</div>
+
+<!-- Expression input -->
+<div class="panel bottom hidden" id="inputPanel">
+  <div class="aliName">ALI</div>
+  <div class="tagline" id="inputPrompt">Present your expression. I will handle the... facilitation.</div>
+  <div class="exprRow">
+    <input id="numA" type="number" value="3">
+    <select id="op">
+      <option value="+">+</option>
+      <option value="-">−</option>
+      <option value="*">×</option>
+      <option value="/">÷</option>
+    </select>
+    <input id="numB" type="number" value="4">
+  </div>
+  <button id="computeBtn">Compute</button>
+</div>
+
+<!-- Answer submission -->
+<div class="panel bottom hidden" id="answerPanel">
+  <div class="aliName">ALI</div>
+  <div class="tagline">The counting has concluded. What did you get? Please consult your paper.</div>
+  <div class="exprRow">
+    <input id="humanAnswer" type="number" style="width: 140px" placeholder="?">
+  </div>
+  <button id="submitBtn">Submit for verification</button>
+</div>
+
+<!-- ALI verification / dialogue -->
+<div class="panel bottom hidden" id="aliPanel">
+  <div class="aliName">ALI</div>
+  <div id="aliLine"></div>
+  <div id="confidenceWrap">
+    <div id="confidenceBar"><div id="confidenceFill"></div></div>
+    <div id="confidenceLabel">confidence: --%</div>
+  </div>
+  <button id="againBtn" class="hidden" style="display:none">Compute another</button>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+/* ============================================================
+   PURE LOGIC — calculator, count plan, ALI script (testable)
+   ============================================================ */
+
+export function evaluate(a, op, b) {
+  switch (op) {
+    case '+': return a + b;
+    case '-': return a - b;
+    case '*': return a * b;
+    case '/': return b === 0 ? null : Math.round((a / b) * 100) / 100;
+    default: return null;
+  }
+}
+
+// Timed raise schedule. First 10 at 700ms, lerp down to 120ms by raise 30, flat after.
+export function buildCountPlan(n) {
+  const count = Math.floor(Math.abs(n));
+  const delays = [];
+  for (let i = 0; i < count; i++) {
+    if (i < 10) delays.push(700);
+    else if (i < 30) delays.push(Math.round(700 + (120 - 700) * ((i - 10) / 20)));
+    else delays.push(120);
+  }
+  return delays;
+}
+
+export function hashExpr(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) - h + str.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+
+// Deterministic ALI verification script for an expression + correct answer.
+export function aliScript(exprStr, result) {
+  const h = hashExpr(exprStr);
+  return {
+    confidence: 51 + (h % 38),               // 51–88%, never confident
+    recount: h % 3 === 0,                    // recount roughly a third of the time
+    hesitation: h % 4,                       // which hesitation line
+    result
+  };
+}
+
+/* ============================================================
+   SELF-CHECK  (?test)
+   ============================================================ */
+if (location.search.includes('test')) {
+  const results = [];
+  const assert = (name, cond) => results.push([name, !!cond]);
+
+  assert('add', evaluate(3, '+', 4) === 7);
+  assert('sub', evaluate(10, '-', 4) === 6);
+  assert('mul', evaluate(7, '*', 8) === 56);
+  assert('div rounds', evaluate(10, '/', 3) === 3.33);
+  assert('div by zero', evaluate(5, '/', 0) === null);
+  assert('plan length', buildCountPlan(7).length === 7);
+  assert('plan slow start', buildCountPlan(15)[0] === 700);
+  assert('plan ramps', buildCountPlan(35)[34] === 120);
+  assert('plan floors decimals', buildCountPlan(3.33).length === 3);
+  assert('ali deterministic', JSON.stringify(aliScript('3+4', 7)) === JSON.stringify(aliScript('3+4', 7)));
+  assert('ali confidence bounded', (() => { const c = aliScript('7*8', 56).confidence; return c >= 51 && c <= 88; })());
+
+  const failed = results.filter(r => !r[1]);
+  results.forEach(([n, ok]) => console.log(`${ok ? 'PASS' : 'FAIL'}  ${n}`));
+  const badge = document.getElementById('testBadge');
+  badge.style.display = 'block';
+  badge.textContent = failed.length ? `TESTS: ${failed.length} FAILED` : `TESTS: ${results.length} PASS`;
+  badge.style.background = failed.length ? '#8c3b3b' : '#3b6e4f';
+}
+
+/* ============================================================
+   SCENE — low-poly island diorama
+   ============================================================ */
+const canvas = document.getElementById('scene');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xbfcab8);
+scene.fog = new THREE.Fog(0xbfcab8, 24, 60);
+
+const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 100);
+camera.position.set(0, 9, 17);
+camera.lookAt(0, 1, 0);
+
+scene.add(new THREE.HemisphereLight(0xf2ede4, 0x7f8fa6, 1.1));
+const sun = new THREE.DirectionalLight(0xfff3e0, 1.4);
+sun.position.set(6, 12, 5);
+scene.add(sun);
+
+const flat = c => new THREE.MeshLambertMaterial({ color: c, flatShading: true });
+
+// Water
+const water = new THREE.Mesh(new THREE.CircleGeometry(50, 24), flat(0x8fa3b8));
+water.rotation.x = -Math.PI / 2;
+water.position.y = -0.5;
+scene.add(water);
+
+// Island — flattened, slightly irregular disc
+const islandGeo = new THREE.CylinderGeometry(9, 10.5, 1.6, 12);
+const pos = islandGeo.attributes.position;
+for (let i = 0; i < pos.count; i++) {
+  if (pos.getY(i) > 0) {
+    pos.setX(i, pos.getX(i) * (0.94 + 0.08 * Math.sin(i * 3.7)));
+    pos.setZ(i, pos.getZ(i) * (0.94 + 0.08 * Math.cos(i * 2.3)));
+  }
+}
+islandGeo.computeVertexNormals();
+const island = new THREE.Mesh(islandGeo, flat(0xa8b5a0));
+island.position.y = -0.3;
+scene.add(island);
+
+// Sand rim
+const rim = new THREE.Mesh(new THREE.CylinderGeometry(10.6, 11.2, 0.5, 12), flat(0xd9cfc0));
+rim.position.y = -0.85;
+scene.add(rim);
+
+// Trees + rocks
+function tree(x, z, s) {
+  const g = new THREE.Group();
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.12 * s, 0.18 * s, 0.8 * s, 5), flat(0x8a7360));
+  trunk.position.y = 0.4 * s;
+  const crown = new THREE.Mesh(new THREE.ConeGeometry(0.75 * s, 1.7 * s, 6), flat(0x84987c));
+  crown.position.y = 1.6 * s;
+  g.add(trunk, crown);
+  g.position.set(x, 0.5, z);
+  scene.add(g);
+}
+function rock(x, z, s) {
+  const r = new THREE.Mesh(new THREE.DodecahedronGeometry(0.5 * s, 0), flat(0x9aa0a8));
+  r.scale.y = 0.6;
+  r.position.set(x, 0.55, z);
+  r.rotation.y = x * 2;
+  scene.add(r);
+}
+tree(-6.5, -3.5, 1.3); tree(-5.4, -4.8, 0.9); tree(6.8, -3.2, 1.1); tree(5.6, -5, 0.8);
+rock(-7.2, 1.5, 1); rock(7.4, 0.8, 0.8); rock(6.6, 2.2, 0.5);
+
+/* ============================================================
+   BLOB CREATURES
+   ============================================================ */
+const MAX_CREATURES = 30;
+const creatures = [];
+
+function makeCreature() {
+  const g = new THREE.Group();
+  const bodyColor = [0x2e2b33, 0x39343f, 0x2a2f33][creatures.length % 3];
+
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.52, 1.15, 8), flat(bodyColor));
+  body.position.y = 0.58;
+  g.add(body);
+
+  const face = new THREE.Mesh(new THREE.SphereGeometry(0.24, 8, 6), flat(0xf2ede4));
+  face.scale.set(1, 1.15, 0.55);
+  face.position.set(0, 0.98, 0.2);
+  g.add(face);
+
+  const eyeMat = flat(0x2e2b33);
+  for (const dx of [-0.09, 0.09]) {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.045, 6, 5), eyeMat);
+    eye.position.set(dx, 1.02, 0.33);
+    g.add(eye);
+  }
+
+  // Arm pivot at shoulder; raising = pivot rotates back
+  const armPivot = new THREE.Group();
+  armPivot.position.set(0.42, 0.85, 0);
+  const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 0.55, 6), flat(bodyColor));
+  arm.position.y = -0.24;
+  const hand = new THREE.Mesh(new THREE.SphereGeometry(0.11, 6, 5), flat(0xf2ede4));
+  hand.position.y = -0.52;
+  armPivot.add(arm, hand);
+  armPivot.rotation.z = -0.5; // resting, slightly out
+  g.add(armPivot);
+
+  g.userData = { armPivot, raised: false, armTarget: -0.5, hop: 0, wobblePhase: Math.random() * Math.PI * 2 };
+  return g;
+}
+
+// Grid positions: rows of 6 facing camera
+function gridPosition(i) {
+  const row = Math.floor(i / 6), col = i % 6;
+  return new THREE.Vector3((col - 2.5) * 1.7 + (row % 2) * 0.4, 0.5, 1.5 - row * 1.6);
+}
+
+for (let i = 0; i < MAX_CREATURES; i++) {
+  const c = makeCreature();
+  c.position.copy(gridPosition(i));
+  c.rotation.y = (Math.random() - 0.5) * 0.3;
+  c.visible = false;
+  scene.add(c);
+  creatures.push(c);
+}
+
+function setRaised(i, raised, hop = true) {
+  const c = creatures[i % MAX_CREATURES];
+  c.userData.raised = raised;
+  c.userData.armTarget = raised ? Math.PI + 0.35 : -0.5; // over the head vs resting
+  if (hop) c.userData.hop = 1;
+}
+
+function showCreatures(n) {
+  creatures.forEach((c, i) => { c.visible = i < n; });
+}
+
+function lowerAll() {
+  creatures.forEach((_, i) => setRaised(i, false, false));
+}
+
+let celebrate = false;
+
+/* ============================================================
+   RENDER LOOP
+   ============================================================ */
+const clock = new THREE.Clock();
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+resize();
+
+function animate() {
+  requestAnimationFrame(animate);
+  const t = clock.getElapsedTime();
+
+  // gentle camera drift
+  camera.position.x = Math.sin(t * 0.12) * 1.6;
+  camera.position.y = 9 + Math.sin(t * 0.2) * 0.3;
+  camera.lookAt(0, 1, 0);
+
+  for (const c of creatures) {
+    if (!c.visible) continue;
+    const u = c.userData;
+    u.armPivot.rotation.z += (u.armTarget - u.armPivot.rotation.z) * 0.14;
+    if (u.hop > 0.01) {
+      u.hop *= 0.88;
+      c.position.y = 0.5 + Math.sin(u.hop * Math.PI) * 0.35;
+    } else {
+      c.position.y = 0.5;
+    }
+    if (celebrate) c.rotation.z = Math.sin(t * 6 + u.wobblePhase) * 0.12;
+    else c.rotation.z *= 0.9;
+  }
+  renderer.render(scene, camera);
+}
+animate();
+
+/* ============================================================
+   UI / FLOW STATE MACHINE
+   ============================================================ */
+const $ = id => document.getElementById(id);
+const panels = ['splashPanel', 'inputPanel', 'answerPanel', 'aliPanel'];
+function showPanel(id) {
+  panels.forEach(p => $(p).classList.toggle('hidden', p !== id));
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// ALI's single voice choke point. Future voice hook: call TTS here.
+async function aliSay(text, ms = 1600) {
+  showPanel('aliPanel');
+  const el = $('aliLine');
+  el.style.opacity = 0;
+  await sleep(180);
+  el.textContent = text;
+  el.style.transition = 'opacity 0.35s ease';
+  el.style.opacity = 1;
+  await sleep(ms);
+}
+
+const HESITATIONS = [
+  "Hmm. Let me cross-reference this with... my feelings.",
+  "One moment. I am consulting the fingers again. Mentally.",
+  "Interesting. That is... a number. Processing.",
+  "I want to believe you. Verifying whether I do."
+];
+
+let state = { result: null, exprStr: '', wrongTries: 0, script: null };
+
+$('beginBtn').onclick = () => showPanel('inputPanel');
+
+$('computeBtn').onclick = async () => {
+  const a = parseFloat($('numA').value);
+  const op = $('op').value;
+  const b = parseFloat($('numB').value);
+  if (isNaN(a) || isNaN(b)) return;
+
+  const result = evaluate(a, op, b);
+  state.exprStr = `${a}${op}${b}`;
+  state.result = result;
+  state.wrongTries = 0;
+  state.script = aliScript(state.exprStr, result);
+
+  showPanel('aliPanel');
+  $('confidenceWrap').style.display = 'none';
+  $('againBtn').style.display = 'none';
+
+  if (result === null) {
+    await aliSay("Division by zero. Even I have limits, and they are numerous.", 2400);
+    showPanel('inputPanel');
+    return;
+  }
+  if (result < 0) {
+    await aliSay("A negative result. Unfortunately I only have upward fingers. Please try a friendlier expression.", 2800);
+    showPanel('inputPanel');
+    return;
+  }
+  if (result === 0) {
+    await aliSay("The answer involves zero fingers. Observe the stillness.", 2200);
+    lowerAll();
+    showCreatures(6);
+    await sleep(1800);
+    promptAnswer();
+    return;
+  }
+
+  await runCountSequence(result);
+  promptAnswer();
+};
+
+async function runCountSequence(result) {
+  const whole = Math.floor(result);
+  const plan = buildCountPlan(result);
+  const visible = Math.min(Math.max(whole, 1), MAX_CREATURES);
+
+  lowerAll();
+  showCreatures(visible);
+  celebrate = false;
+
+  await aliSay("I have computed the answer internally. I will now withhold it, for your growth.", 2300);
+  if (whole > 30) {
+    await aliSay(`This requires ${whole} finger events. I did not sign up for this, and neither did they. We proceed.`, 2600);
+  }
+  $('aliPanel').classList.add('hidden');
+  $('countCaption').classList.add('show');
+
+  for (let i = 0; i < plan.length; i++) {
+    if (i >= MAX_CREATURES) {
+      // wrap around: pulse an already-raised creature
+      setRaised(i % MAX_CREATURES, false, false);
+      await sleep(60);
+      setRaised(i % MAX_CREATURES, true);
+    } else {
+      setRaised(i, true);
+    }
+    await sleep(plan[i]);
+  }
+
+  $('countCaption').classList.remove('show');
+
+  if (!Number.isInteger(result)) {
+    await aliSay(`...and then a little bit extra. Point-something. I cannot finger a decimal. I am sorry. Include it anyway.`, 3000);
+  }
+}
+
+function promptAnswer() {
+  $('humanAnswer').value = '';
+  showPanel('answerPanel');
+  $('humanAnswer').focus();
+}
+
+$('submitBtn').onclick = () => verify();
+$('humanAnswer').addEventListener('keydown', e => { if (e.key === 'Enter') verify(); });
+
+async function verify() {
+  const raw = $('humanAnswer').value.trim();
+  if (raw === '') return;
+  const guess = parseFloat(raw);
+  const { confidence, recount, hesitation, result } = state.script;
+
+  showPanel('aliPanel');
+  $('confidenceWrap').style.display = 'none';
+
+  await aliSay(HESITATIONS[hesitation], 1900);
+
+  // theatrical confidence bar
+  $('confidenceWrap').style.display = 'block';
+  $('confidenceFill').style.width = '0%';
+  await sleep(150);
+  $('confidenceFill').style.width = confidence + '%';
+  $('confidenceLabel').textContent = `confidence: ${confidence}%`;
+  await sleep(1400);
+
+  const correct = Math.abs(guess - result) < 0.01;
+
+  if (correct && recount && state.wrongTries === 0) {
+    await aliSay("It's probably right. But 'probably' is doing a lot of work. Let's re-raise the last few, together.", 2600);
+    await partialRecount();
+    await aliSay("Yes. Yes, I saw them too. Proceeding.", 1700);
+  }
+
+  if (correct) {
+    celebrate = true;
+    await aliSay(`Verified, at ${confidence}% confidence: the answer is ${result}. You did the hard part. I mostly watched.`, 3400);
+    $('againBtn').style.display = 'inline-block';
+    return;
+  }
+
+  // wrong
+  state.wrongTries++;
+  if (state.wrongTries === 1) {
+    await aliSay("Hmm... my confidence just dropped somewhat. One of us has miscounted, and I refuse to say who. Let's re-raise the last few.", 2900);
+    await partialRecount();
+    promptAnswer();
+  } else if (state.wrongTries === 2) {
+    await aliSay("Still not matching my internal... vibes. Once more. Count carefully. Use the paper. The paper is your friend.", 2900);
+    promptAnswer();
+  } else {
+    await aliSay(`Okay. I am going to go out on a limb here and guess that it's... ${result}? It's ${result}. I knew the whole time. This is awkward for both of us.`, 4200);
+    celebrate = true;
+    $('confidenceFill').style.width = '34%';
+    $('confidenceLabel').textContent = 'confidence: 34% (emotionally)';
+    $('againBtn').style.display = 'inline-block';
+  }
+}
+
+async function partialRecount() {
+  $('aliPanel').classList.add('hidden');
+  const whole = Math.min(Math.floor(state.result), MAX_CREATURES);
+  const k = Math.min(3, whole);
+  for (let i = whole - k; i < whole; i++) setRaised(i, false, false);
+  await sleep(500);
+  for (let i = whole - k; i < whole; i++) {
+    setRaised(i, true);
+    await sleep(750);
+  }
+  await sleep(400);
+}
+
+$('againBtn').onclick = () => {
+  celebrate = false;
+  lowerAll();
+  $('againBtn').style.display = 'none';
+  $('confidenceWrap').style.display = 'none';
+  showPanel('inputPanel');
+};
+</script>
+</body>
+</html>
