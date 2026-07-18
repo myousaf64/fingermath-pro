@@ -60,21 +60,39 @@
   button:hover { transform: translateY(-1px); background: #443f4d; }
   button.ghost { background: transparent; color: var(--charcoal); }
 
-  input, select {
-    font-family: inherit;
-    font-size: 22px;
-    width: 90px;
-    padding: 8px 10px;
-    text-align: center;
+  #padDisplay {
+    font-size: 30px;
+    letter-spacing: 2px;
+    background: #fbf9f5;
     border: 1.5px solid #b9b2a6;
     border-radius: 10px;
+    padding: 10px 16px;
+    margin: 14px auto 12px;
+    max-width: 320px;
+    min-height: 56px;
+    line-height: 36px;
+    text-align: right;
+    overflow: hidden;
+  }
+  #padKeys {
+    display: grid;
+    grid-template-columns: repeat(4, 64px);
+    gap: 8px;
+    justify-content: center;
+  }
+  #padKeys button {
+    margin: 0;
+    padding: 12px 0;
+    font-size: 20px;
+    border-radius: 12px;
     background: #fbf9f5;
     color: var(--ink);
-    outline: none;
+    border: 1.5px solid #b9b2a6;
   }
-  input:focus, select:focus { border-color: var(--dusk); }
-  select { width: 70px; cursor: pointer; }
-  .exprRow { display: flex; gap: 12px; justify-content: center; align-items: center; margin: 14px 0 4px; }
+  #padKeys button:hover { background: #efe9dd; transform: none; }
+  #padKeys button.op { background: var(--dusk); color: var(--cream); border-color: var(--dusk); }
+  #padKeys button.equals { grid-column: span 4; background: var(--charcoal); color: var(--cream); border-color: var(--charcoal); }
+  #padKeys button:disabled { opacity: 0.35; cursor: default; }
 
   #aliLine {
     min-height: 48px;
@@ -126,31 +144,12 @@
   <div class="small">With FingTech Labs we are dedicated to make the world... ummm... the same place probably?</div>
 </div>
 
-<!-- Expression input -->
-<div class="panel bottom hidden" id="inputPanel">
+<!-- Keypad: expression entry AND answer entry -->
+<div class="panel bottom hidden" id="padPanel">
   <div class="aliName">ALI</div>
-  <div class="tagline" id="inputPrompt">Present your expression. I will handle the... facilitation.</div>
-  <div class="exprRow">
-    <input id="numA" type="number" value="3">
-    <select id="op">
-      <option value="+">+</option>
-      <option value="-">−</option>
-      <option value="*">×</option>
-      <option value="/">÷</option>
-    </select>
-    <input id="numB" type="number" value="4">
-  </div>
-  <button id="computeBtn">Compute</button>
-</div>
-
-<!-- Answer submission -->
-<div class="panel bottom hidden" id="answerPanel">
-  <div class="aliName">ALI</div>
-  <div class="tagline">The counting has concluded. What did you get? Please consult your paper.</div>
-  <div class="exprRow">
-    <input id="humanAnswer" type="number" style="width: 140px" placeholder="?">
-  </div>
-  <button id="submitBtn">Submit for verification</button>
+  <div class="tagline" id="padPrompt">Present your expression. I will handle the... facilitation.</div>
+  <div id="padDisplay">&nbsp;</div>
+  <div id="padKeys"></div>
 </div>
 
 <!-- ALI verification / dialogue -->
@@ -424,7 +423,7 @@ animate();
    UI / FLOW STATE MACHINE
    ============================================================ */
 const $ = id => document.getElementById(id);
-const panels = ['splashPanel', 'inputPanel', 'answerPanel', 'aliPanel'];
+const panels = ['splashPanel', 'padPanel', 'aliPanel'];
 function showPanel(id) {
   panels.forEach(p => $(p).classList.toggle('hidden', p !== id));
 }
@@ -451,12 +450,68 @@ const HESITATIONS = [
 
 let state = { result: null, exprStr: '', wrongTries: 0, script: null };
 
-$('beginBtn').onclick = () => showPanel('inputPanel');
+/* ---------- Keypad (expression + answer entry) ---------- */
+const OP_SYMBOLS = { '+': '+', '-': '−', '*': '×', '/': '÷' };
+const SYMBOL_OPS = { '+': '+', '−': '-', '×': '*', '÷': '/' };
+const pad = { mode: 'expr', a: '', op: null, b: '', ans: '' };
 
-$('computeBtn').onclick = async () => {
-  const a = parseFloat($('numA').value);
-  const op = $('op').value;
-  const b = parseFloat($('numB').value);
+const KEY_LAYOUT = ['7', '8', '9', '÷', '4', '5', '6', '×', '1', '2', '3', '−', '0', '.', 'C', '+', '='];
+for (const k of KEY_LAYOUT) {
+  const btn = document.createElement('button');
+  btn.textContent = k;
+  if (k in SYMBOL_OPS) btn.className = 'op';
+  if (k === '=') btn.className = 'equals';
+  btn.onclick = () => padPress(k);
+  $('padKeys').appendChild(btn);
+}
+
+function showPad(mode, prompt) {
+  pad.mode = mode;
+  pad.a = ''; pad.op = null; pad.b = ''; pad.ans = '';
+  $('padPrompt').textContent = prompt;
+  $('padKeys').querySelectorAll('button.op').forEach(b => { b.disabled = mode === 'answer'; });
+  updatePadDisplay();
+  showPanel('padPanel');
+}
+
+function updatePadDisplay() {
+  const text = pad.mode === 'expr'
+    ? pad.a + (pad.op ? ' ' + OP_SYMBOLS[pad.op] + ' ' : '') + pad.b
+    : pad.ans;
+  $('padDisplay').innerHTML = text || '&nbsp;';
+}
+
+function padPress(k) {
+  if (k === 'C') {
+    pad.a = ''; pad.op = null; pad.b = ''; pad.ans = '';
+  } else if (k === '=') {
+    if (pad.mode === 'expr') {
+      if (pad.a !== '' && pad.op && pad.b !== '') compute(parseFloat(pad.a), pad.op, parseFloat(pad.b));
+    } else {
+      if (pad.ans !== '') verify(parseFloat(pad.ans));
+    }
+    return;
+  } else if (k in SYMBOL_OPS) {
+    if (pad.mode === 'expr' && pad.a !== '' && pad.b === '') pad.op = SYMBOL_OPS[k];
+  } else { // digit or dot
+    const target = pad.mode === 'answer' ? 'ans' : (pad.op ? 'b' : 'a');
+    if (k === '.' && pad[target].includes('.')) return;
+    if (pad[target].length < 9) pad[target] += k;
+  }
+  updatePadDisplay();
+}
+
+addEventListener('keydown', e => {
+  if ($('padPanel').classList.contains('hidden')) return;
+  if (/^[0-9.]$/.test(e.key)) padPress(e.key);
+  else if (e.key in OP_SYMBOLS) padPress(OP_SYMBOLS[e.key]);
+  else if (e.key === 'Enter' || e.key === '=') padPress('=');
+  else if (e.key === 'Backspace' || e.key === 'Escape') padPress('C');
+});
+
+$('beginBtn').onclick = () => showPad('expr', 'Present your expression. I will handle the... facilitation.');
+
+async function compute(a, op, b) {
   if (isNaN(a) || isNaN(b)) return;
 
   const result = evaluate(a, op, b);
@@ -471,12 +526,12 @@ $('computeBtn').onclick = async () => {
 
   if (result === null) {
     await aliSay("Division by zero. Even I have limits, and they are numerous.", 2400);
-    showPanel('inputPanel');
+    $('beginBtn').onclick();
     return;
   }
   if (result < 0) {
     await aliSay("A negative result. Unfortunately I only have upward fingers. Please try a friendlier expression.", 2800);
-    showPanel('inputPanel');
+    $('beginBtn').onclick();
     return;
   }
   if (result === 0) {
@@ -490,7 +545,7 @@ $('computeBtn').onclick = async () => {
 
   await runCountSequence(result);
   promptAnswer();
-};
+}
 
 async function runCountSequence(result) {
   const whole = Math.floor(result);
@@ -528,18 +583,11 @@ async function runCountSequence(result) {
 }
 
 function promptAnswer() {
-  $('humanAnswer').value = '';
-  showPanel('answerPanel');
-  $('humanAnswer').focus();
+  showPad('answer', 'The counting has concluded. What did you get? Please consult your paper.');
 }
 
-$('submitBtn').onclick = () => verify();
-$('humanAnswer').addEventListener('keydown', e => { if (e.key === 'Enter') verify(); });
-
-async function verify() {
-  const raw = $('humanAnswer').value.trim();
-  if (raw === '') return;
-  const guess = parseFloat(raw);
+async function verify(guess) {
+  if (isNaN(guess)) return;
   const { confidence, recount, hesitation, result } = state.script;
 
   showPanel('aliPanel');
@@ -606,7 +654,7 @@ $('againBtn').onclick = () => {
   lowerAll();
   $('againBtn').style.display = 'none';
   $('confidenceWrap').style.display = 'none';
-  showPanel('inputPanel');
+  showPad('expr', 'Present your expression. I will handle the... facilitation.');
 };
 </script>
 </body>
