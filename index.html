@@ -215,6 +215,11 @@ export function handGroups(n) {
   return groups;
 }
 
+// Generous screen-space hit test for finger pressing (all args in CSS px)
+export function withinPressRadius(px, py, fx, fy, r) {
+  return Math.hypot(px - fx, py - fy) <= r;
+}
+
 export function hashExpr(str) {
   let h = 0;
   for (let i = 0; i < str.length; i++) h = ((h << 5) - h + str.charCodeAt(i)) | 0;
@@ -252,6 +257,9 @@ if (location.search.includes('test')) {
   assert('groups 5', JSON.stringify(handGroups(5)) === '[5]');
   assert('groups 0', handGroups(0).length === 0);
   assert('groups cap', handGroups(56).length === 6);
+  assert('press inside', withinPressRadius(100, 100, 130, 140, 70));
+  assert('press edge', withinPressRadius(0, 0, 0, 70, 70));
+  assert('press outside', !withinPressRadius(0, 0, 60, 60, 70));
   assert('ali deterministic', JSON.stringify(aliScript('3+4', 7)) === JSON.stringify(aliScript('3+4', 7)));
   assert('ali confidence bounded', (() => { const c = aliScript('7*8', 56).confidence; return c >= 51 && c <= 88; })());
 
@@ -426,7 +434,12 @@ function setFinger(i, raised) {
 function highlightFinger(i, on) {
   const fg = fingerAt(i);
   fg.highlight = on;
-  if (!on) fg.mat.emissive.setHex(0x000000);
+  // half-unfold while highlighted: bigger, visible press target
+  if (on) fg.target = (fg.folded + fg.up) / 2;
+  else {
+    fg.mat.emissive.setHex(0x000000);
+    if (!fg.raised) fg.target = fg.folded;
+  }
 }
 
 function lowerAll() {
@@ -650,7 +663,10 @@ addEventListener('keydown', e => {
   else if (e.key === 'Backspace' || e.key === 'Escape') padPress('C');
 });
 
-$('beginBtn').onclick = () => showPad('expr', 'Present your expression. I will handle the... facilitation.');
+$('beginBtn').onclick = () => {
+  unlockAudio();
+  showPad('expr', 'Present your expression. I will handle the... facilitation.');
+};
 
 async function compute(a, op, b) {
   if (isNaN(a) || isNaN(b)) return;
@@ -718,45 +734,77 @@ function leaderShout(i) {
   playShoutAudio(line, lineIdx);
 }
 
-// Voice layering: runtime TTS via /tts proxy -> pregenerated mp3 -> silent.
-// Blob URLs cached per line so repeat shouts are instant.
+// Voice: play the pregenerated mp3 IMMEDIATELY (zero latency, always audible),
+// while warming a live-TTS blob in the background for the next time that line fires.
+// Single reused <audio> element: unlocked once by the first user gesture.
 const shoutCache = new Map();
 let ttsAvailable = true;
-let currentShout = null;
+const shoutPlayer = new Audio();
+shoutPlayer.volume = 0.9;
 
-async function playShoutAudio(line, lineIdx) {
-  let url = shoutCache.get(line);
-  if (!url && ttsAvailable) {
-    try {
-      const r = await fetch('/tts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: line })
-      });
-      if (r.ok) {
-        url = URL.createObjectURL(await r.blob());
-        shoutCache.set(line, url);
-      } else ttsAvailable = false;
-    } catch { ttsAvailable = false; }
+function unlockAudio() { // must run inside a user-gesture handler
+  shoutPlayer.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==';
+  shoutPlayer.play().catch(() => {});
+}
+
+function playShoutAudio(line, lineIdx) {
+  const staticUrl = lineIdx < 0 ? 'assets/audio/impatience.mp3' : `assets/audio/shout-${lineIdx}.mp3`;
+  shoutPlayer.pause();
+  shoutPlayer.src = shoutCache.get(line) || staticUrl;
+  shoutPlayer.currentTime = 0;
+  shoutPlayer.play().catch(err => console.warn('shout blocked:', err.message));
+
+  if (!shoutCache.has(line) && ttsAvailable) {
+    fetch('/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: line })
+    }).then(async r => {
+      if (r.ok) shoutCache.set(line, URL.createObjectURL(await r.blob()));
+      else ttsAvailable = false;
+    }).catch(() => { ttsAvailable = false; });
   }
-  if (!url) url = lineIdx < 0 ? 'assets/audio/impatience.mp3' : `assets/audio/shout-${lineIdx}.mp3`;
-  if (currentShout) currentShout.pause();
-  currentShout = new Audio(url);
-  currentShout.play().catch(() => {}); // silent fallback (autoplay policy / missing file)
 }
 
 /* ---------- Finger press detection ---------- */
+// Raycast against tiny finger boxes is near-unhittable from the high camera,
+// so the primary test is a generous screen-space radius around the finger.
+const PRESS_RADIUS = 70; // CSS px
 const raycaster = new THREE.Raycaster();
+const worldTmp = new THREE.Vector3();
 let pendingPress = null;
-const waitForPress = i => new Promise(res => { pendingPress = { i, res }; });
+let nudgeTimer = null;
+
+function fingerScreenPos(i) {
+  fingerAt(i).pivot.getWorldPosition(worldTmp).project(camera);
+  return { x: (worldTmp.x + 1) / 2 * innerWidth, y: (1 - worldTmp.y) / 2 * innerHeight };
+}
+
+function waitForPress(i) {
+  renderer.domElement.style.cursor = 'pointer';
+  clearTimeout(nudgeTimer);
+  nudgeTimer = setTimeout(() => { // gentle nudge if user hesitates
+    const bubble = $('leaderBubble');
+    bubble.textContent = "THE GLOWING ONE, HUMAN! PRESS IT!";
+    bubble.classList.add('show');
+    leaderShoutAnim = 1;
+    setTimeout(() => bubble.classList.remove('show'), 2000);
+  }, 5000);
+  return new Promise(res => { pendingPress = { i, res }; });
+}
 
 renderer.domElement.addEventListener('pointerdown', e => {
   if (!pendingPress) return;
   const mouse = new THREE.Vector2((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
   raycaster.setFromCamera(mouse, camera);
-  if (raycaster.intersectObjects(fingerAt(pendingPress.i).meshes).length) {
+  const s = fingerScreenPos(pendingPress.i);
+  const hit = raycaster.intersectObjects(fingerAt(pendingPress.i).meshes).length > 0
+    || withinPressRadius(e.clientX, e.clientY, s.x, s.y, PRESS_RADIUS);
+  if (hit) {
     const p = pendingPress;
     pendingPress = null;
+    clearTimeout(nudgeTimer);
+    renderer.domElement.style.cursor = '';
     p.res();
   }
 });
