@@ -308,6 +308,8 @@ if (location.search.includes('test')) {
 const canvas = document.getElementById('scene');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xbfcab8);
@@ -317,18 +319,26 @@ const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 100);
 camera.position.set(0, 9, 17);
 camera.lookAt(0, 1, 0);
 
-scene.add(new THREE.HemisphereLight(0xf2ede4, 0x7f8fa6, 1.1));
-const sun = new THREE.DirectionalLight(0xfff3e0, 1.4);
-sun.position.set(6, 12, 5);
+scene.add(new THREE.HemisphereLight(0xf2ede4, 0x7f8fa6, 1.0));
+const sun = new THREE.DirectionalLight(0xffe8c8, 1.6);
+sun.position.set(6, 14, 6);
+sun.castShadow = true;
+sun.shadow.mapSize.set(1024, 1024);
+Object.assign(sun.shadow.camera, { left: -14, right: 14, top: 14, bottom: -14, near: 1, far: 40 });
 scene.add(sun);
+
+const enableShadows = root => root.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
 
 const flat = c => new THREE.MeshLambertMaterial({ color: c, flatShading: true });
 
-// Water
-const water = new THREE.Mesh(new THREE.CircleGeometry(50, 24), flat(0x8fa3b8));
+// Water — vertex ripple animated in render loop
+const waterGeo = new THREE.CircleGeometry(50, 48, 0, Math.PI * 2);
+const water = new THREE.Mesh(waterGeo, flat(0x8fa3b8));
 water.rotation.x = -Math.PI / 2;
 water.position.y = -0.5;
+water.receiveShadow = true;
 scene.add(water);
+const waterBase = waterGeo.attributes.position.array.slice();
 
 // Island — flattened, slightly irregular disc
 const islandGeo = new THREE.CylinderGeometry(9, 10.5, 1.6, 12);
@@ -369,6 +379,55 @@ function rock(x, z, s) {
 }
 tree(-6.5, -3.5, 1.3); tree(-5.4, -4.8, 0.9); tree(6.8, -3.2, 1.1); tree(5.6, -5, 0.8);
 rock(-7.2, 1.5, 1); rock(7.4, 0.8, 0.8); rock(6.6, 2.2, 0.5);
+enableShadows(scene);
+
+// Clouds — flat-shaded blobs drifting across the sky
+const clouds = [];
+for (let i = 0; i < 3; i++) {
+  const c = new THREE.Group();
+  for (let b = 0; b < 3; b++) {
+    const puff = new THREE.Mesh(new THREE.SphereGeometry(0.9 - b * 0.2, 7, 5),
+      new THREE.MeshLambertMaterial({ color: 0xf2ede4, flatShading: true, transparent: true, opacity: 0.85 }));
+    puff.position.set(b * 0.9 - 0.9, (b % 2) * 0.25, 0);
+    puff.scale.y = 0.55;
+    c.add(puff);
+  }
+  c.position.set(-20 + i * 14, 8.5 + i * 0.8, -8 - i * 3);
+  scene.add(c);
+  clouds.push(c);
+}
+
+// Birds — two triangle wings on a circular path
+const birds = [];
+for (let i = 0; i < 2; i++) {
+  const bird = new THREE.Group();
+  const wingMat = flat(0x35323a);
+  const wings = [];
+  for (const s of [-1, 1]) {
+    const wing = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.55, 3), wingMat);
+    wing.rotation.z = s * Math.PI / 2;
+    wing.position.x = s * 0.25;
+    bird.add(wing);
+    wings.push(wing);
+  }
+  bird.userData = { wings, phase: i * Math.PI, radius: 13 + i * 2, height: 6.5 + i, speed: 0.14 + i * 0.04 };
+  scene.add(bird);
+  birds.push(bird);
+}
+
+// Floating dust motes
+const moteGeo = new THREE.BufferGeometry();
+const motePos = new Float32Array(80 * 3);
+for (let i = 0; i < 80; i++) {
+  motePos[i * 3] = (Math.random() - 0.5) * 20;
+  motePos[i * 3 + 1] = Math.random() * 6 + 0.5;
+  motePos[i * 3 + 2] = (Math.random() - 0.5) * 14;
+}
+moteGeo.setAttribute('position', new THREE.BufferAttribute(motePos, 3));
+const motes = new THREE.Points(moteGeo, new THREE.PointsMaterial({
+  color: 0xf2ede4, size: 0.09, transparent: true, opacity: 0.55, sizeAttenuation: true
+}));
+scene.add(motes);
 
 /* ============================================================
    HANDS — low-poly, articulated fingers
@@ -476,6 +535,7 @@ function rebuildHands() {
   for (let i = 0; i < MAX_HANDS; i++) {
     const h = makeHand();
     h.visible = false;
+    enableShadows(h);
     scene.add(h);
     hands.push(h);
   }
@@ -505,6 +565,7 @@ function setFinger(i, raised) {
   fg.highlight = false;
   fg.target = raised ? fg.up : fg.folded;
   fg.mat.emissive.setHex(0x000000);
+  if (raised) sfx.pop(i);
 }
 
 function highlightFinger(i, on) {
@@ -548,10 +609,26 @@ function makeViking(scale, isLeader) {
     g.add(eye);
   }
 
+  // stubby arms (soldier raises them to push fingers up)
+  const arms = [];
+  for (const s of [-1, 1]) {
+    const armPivot = new THREE.Group();
+    armPivot.position.set(s * 0.42, 0.85, 0);
+    const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 0.5, 6), flat(bodyColor));
+    arm.position.y = -0.22;
+    const fist = new THREE.Mesh(new THREE.SphereGeometry(0.1, 6, 5), flat(0xf2ede4));
+    fist.position.y = -0.48;
+    armPivot.add(arm, fist);
+    armPivot.rotation.z = s * 0.45;
+    g.add(armPivot);
+    arms.push(armPivot);
+  }
+
   // helmet
   const helmet = new THREE.Mesh(new THREE.ConeGeometry(0.3, 0.42, 7), flat(0x9aa0a8));
   helmet.position.y = 1.32;
   g.add(helmet);
+  let banner = null;
   if (isLeader) { // horns + banner
     for (const s of [-1, 1]) {
       const horn = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.35, 5), flat(0xf2ede4));
@@ -562,7 +639,7 @@ function makeViking(scale, isLeader) {
     const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 2.6, 5), flat(0x8a7360));
     pole.position.set(0.55, 1.3, -0.1);
     g.add(pole);
-    const banner = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.9), new THREE.MeshLambertMaterial({ color: 0x8c3b3b, side: THREE.DoubleSide, flatShading: true }));
+    banner = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.9), new THREE.MeshLambertMaterial({ color: 0x8c3b3b, side: THREE.DoubleSide, flatShading: true }));
     banner.position.set(0.92, 2.1, -0.1);
     g.add(banner);
   } else { // shield
@@ -573,7 +650,8 @@ function makeViking(scale, isLeader) {
   }
 
   g.scale.setScalar(scale);
-  g.userData = { bob: 0, walking: false };
+  g.userData = { bob: 0, walking: false, arms, banner, push: 0, startle: 0 };
+  enableShadows(g);
   return g;
 }
 
@@ -593,8 +671,10 @@ async function soldierWalkTo(x, z) {
   soldier.userData.walking = true;
   const target = new THREE.Vector3(x, 0.5, z);
   soldier.lookAt(target.x, 0.5, target.z);
+  let lastStep = 0;
   while (soldier.position.distanceTo(target) > 0.15) {
     soldier.position.lerp(target, 0.045);
+    if (performance.now() - lastStep > 230) { sfx.step(); lastStep = performance.now(); }
     await nextFrame();
   }
   soldier.userData.walking = false;
@@ -634,16 +714,66 @@ function animate() {
     else h.rotation.z *= 0.9;
   }
 
-  // soldier bob while walking, leader angry hop while shouting
-  soldier.position.y = 0.5 + (soldier.userData.walking ? Math.abs(Math.sin(t * 10)) * 0.18 : 0);
+  // --- soldier ---
+  const su = soldier.userData;
+  soldier.position.y = 0.5
+    + (su.walking ? Math.abs(Math.sin(t * 10)) * 0.18 : 0)
+    + su.startle * Math.abs(Math.sin(t * 16)) * 0.3;
+  su.startle *= 0.9;
+  su.push *= 0.94;
+  const armUp = su.push > 0.05;
+  su.arms[0].rotation.z += ((armUp ? 2.6 : -0.45) - su.arms[0].rotation.z) * 0.18;
+  su.arms[1].rotation.z += ((armUp ? -2.6 : 0.45) - su.arms[1].rotation.z) * 0.18;
+  if (su.walking) soldier.rotation.z = Math.sin(t * 12) * 0.09; // waddle
+  else if (celebrate) soldier.rotation.z = Math.sin(t * 6) * 0.12;
+  else soldier.rotation.z *= 0.9;
+
+  // --- leader: paces when idle, stomps when shouting, nods when pleased ---
+  const lu = leader.userData;
   if (leaderShoutAnim > 0.01) {
     leaderShoutAnim *= 0.92;
-    leader.position.y = 0.9 + Math.abs(Math.sin(t * 14)) * 0.25 * leaderShoutAnim;
-    leader.rotation.z = Math.sin(t * 14) * 0.06 * leaderShoutAnim;
+    leader.position.y = 0.9 + Math.abs(Math.sin(t * 14)) * 0.28 * leaderShoutAnim;
+    leader.rotation.z = Math.sin(t * 14) * 0.07 * leaderShoutAnim;
+    lu.arms[0].rotation.z += (2.4 - lu.arms[0].rotation.z) * 0.2; // arm flailing skyward
   } else {
     leader.position.y = 0.9;
+    leader.position.x = 6.4 + Math.sin(t * 0.45) * 0.9;   // patrol pacing
+    leader.position.z = 3.4 + Math.cos(t * 0.45) * 0.35;
+    leader.rotation.y = -0.6 - Math.cos(t * 0.45) * 0.4;
+    lu.arms[0].rotation.z += (-0.45 - lu.arms[0].rotation.z) * 0.1;
+    if (celebrate) leader.rotation.x = Math.sin(t * 2.2) * 0.08; // slow approving nod
+    else leader.rotation.x *= 0.9;
   }
-  if (celebrate) soldier.rotation.z = Math.sin(t * 6) * 0.12;
+  if (lu.banner) lu.banner.rotation.y = Math.sin(t * 1.6) * 0.18; // banner sway
+
+  // --- environment life ---
+  const wp = waterGeo.attributes.position;
+  for (let i = 0; i < wp.count; i++) {
+    const bx = waterBase[i * 3], by = waterBase[i * 3 + 1];
+    wp.setZ(i, Math.sin(t * 1.1 + bx * 0.4 + by * 0.3) * 0.12);
+  }
+  wp.needsUpdate = true;
+
+  for (const c of clouds) {
+    c.position.x += 0.008;
+    if (c.position.x > 24) c.position.x = -24;
+  }
+  for (const b of birds) {
+    const u = b.userData;
+    const a = t * u.speed + u.phase;
+    b.position.set(Math.cos(a) * u.radius, u.height + Math.sin(t * 0.7 + u.phase) * 0.4, Math.sin(a) * u.radius * 0.7);
+    b.rotation.y = -a;
+    const flap = Math.sin(t * 9 + u.phase) * 0.5;
+    u.wings[0].rotation.x = flap;
+    u.wings[1].rotation.x = -flap;
+  }
+  const mp = moteGeo.attributes.position;
+  for (let i = 0; i < mp.count; i++) {
+    let y = mp.getY(i) + 0.004;
+    if (y > 7) y = 0.5;
+    mp.setY(i, y);
+  }
+  mp.needsUpdate = true;
 
   renderer.render(scene, camera);
 }
@@ -712,6 +842,7 @@ function updatePadDisplay() {
 }
 
 function padPress(k) {
+  k === '=' ? sfx.equals() : sfx.key();
   if (k === 'C') {
     pad.a = ''; pad.op = null; pad.b = ''; pad.ans = '';
   } else if (k === '=') {
@@ -859,6 +990,7 @@ function leaderShout(i) {
   const lineIdx = i < 0 ? -1 : (hashExpr(state.exprStr) + i) % SHOUTS.length;
   const line = i < 0 ? IMPATIENCE : SHOUTS[lineIdx];
   leaderShoutAnim = 1;
+  soldier.userData.startle = 1;
   const bubble = $('leaderBubble');
   // anchor bubble beside the leader on screen
   worldTmp.copy(leader.position).add(new THREE.Vector3(0, 3.2, 0)).project(camera);
@@ -883,7 +1015,32 @@ shoutPlayer.volume = 0.9;
 function unlockAudio() { // must run inside a user-gesture handler
   shoutPlayer.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==';
   shoutPlayer.play().catch(() => {});
+  if (AC && AC.state === 'suspended') AC.resume();
 }
+
+/* ---------- Tiny SFX synth (no files) ---------- */
+const AC = window.AudioContext ? new AudioContext() : null;
+function blip(freq, dur = 0.08, type = 'sine', vol = 0.12, slide = 0) {
+  if (!AC || AC.state === 'suspended') return;
+  const o = AC.createOscillator(), gn = AC.createGain();
+  o.type = type;
+  o.frequency.setValueAtTime(freq, AC.currentTime);
+  if (slide) o.frequency.linearRampToValueAtTime(Math.max(30, freq + slide), AC.currentTime + dur);
+  gn.gain.setValueAtTime(vol, AC.currentTime);
+  gn.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + dur);
+  o.connect(gn).connect(AC.destination);
+  o.start();
+  o.stop(AC.currentTime + dur);
+}
+const sfx = {
+  key: () => blip(620, 0.05, 'square', 0.05),
+  equals: () => blip(392, 0.12, 'square', 0.07),
+  pop: i => blip(280 + (i % 30) * 16, 0.14, 'triangle', 0.16, 90),
+  step: () => blip(110, 0.05, 'sine', 0.05),
+  hum: () => { blip(88, 1.3, 'sawtooth', 0.03); blip(92, 1.3, 'sawtooth', 0.03); },
+  chime: () => { blip(523, 0.25, 'sine', 0.12); setTimeout(() => blip(659, 0.35, 'sine', 0.12), 140); },
+  wah: () => blip(420, 0.55, 'sawtooth', 0.08, -220)
+};
 
 function playShoutAudio(line, lineIdx) {
   const staticUrl = lineIdx < 0 ? 'assets/audio/impatience.mp3' : `assets/audio/shout-${lineIdx}.mp3`;
@@ -978,6 +1135,8 @@ async function runCountSequence(result) {
       highlightFinger(i, false);
       const h = hands[Math.floor((i % MAX_FINGERS) / 5)];
       await soldierWalkTo(h.position.x, h.position.z + 2.4);
+      soldier.userData.push = 1; // heave the finger upward
+      await sleep(180);
       setFinger(i, true);
       leaderShout(i);
       await sleep(650);
@@ -1009,6 +1168,7 @@ async function verify(guess) {
   await aliSay(HESITATIONS[hesitation], 1900);
 
   // theatrical confidence bar
+  sfx.hum();
   $('confidenceWrap').style.display = 'block';
   $('confidenceFill').style.width = '0%';
   await sleep(150);
@@ -1026,12 +1186,14 @@ async function verify(guess) {
 
   if (correct) {
     celebrate = true;
+    sfx.chime();
     await aliSay(`Verified, at ${confidence}% confidence: the answer is ${result}. You did the hard part. I mostly watched.`, 3400);
     $('againBtn').style.display = 'inline-block';
     return;
   }
 
   // wrong
+  sfx.wah();
   state.wrongTries++;
   if (state.wrongTries === 1) {
     await aliSay("Hmm... my confidence just dropped somewhat. One of us has miscounted, and I refuse to say who. Let's re-raise the last few.", 2900);
