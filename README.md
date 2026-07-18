@@ -33,6 +33,15 @@ python3 -m http.server 8000
 - `assets/audio/` — pregenerated leader shouts (fallback voice)
 - `assets/refs/` — art direction references (Bad North-style vikings) + hackathon rules; not loaded by the app
 
+## Customization
+
+After the splash you pick your hands: four themes (human, gauntlet, skeleton, robot) with four skins each, previewed live in the scene and saved in localStorage. The gear button (top-left) reopens the chooser between calculations.
+
+## Troubleshooting
+
+- No sound: click "Begin computing" first (browsers require a gesture before audio). Live TTS needs `node server.js`; static clips work everywhere.
+- Pressing: click anywhere near the glowing finger — the hit area is generous.
+
 ## How the count works
 
 - Pure fns at top of `index.html`: `evaluate`, `buildCountPlan` (speed ramp), `handGroups` (12 → [5,5,2], capped at 6 hands with finger reuse past 30), `aliScript` (deterministic hesitation/confidence/recount)
